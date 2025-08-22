@@ -44,6 +44,9 @@ contract Deploy is Script {
         address dbcAIProxy = vm.envAddress("DBC_AI_PROXY");
         console.log("DBC AI Proxy Address:", dbcAIProxy);
 
+        address slashToAddress = vm.envAddress("SLASH_TO_ADDRESS");
+        console.log("slashToAddress:", slashToAddress);
+
         address owner = vm.envAddress("OWNER");
         console.log("owner:", owner);
 
@@ -57,7 +60,7 @@ contract Deploy is Script {
             "NFTStaking.sol:NFTStaking",
             abi.encodeCall(
                 NFTStaking.initialize,
-                (projectName, owner, nftContract, rewardTokenContract, dbcAIProxy, rewardAmountPerYear)
+                (owner, nftContract, rewardTokenContract, dbcAIProxy, slashToAddress,projectName)
             )
         );
         return (proxy, logic);

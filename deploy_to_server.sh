@@ -3,7 +3,7 @@
 # 服务器信息
 SERVER_IP="54.179.233.88"
 SERVER_USER="ubuntu"
-SERVER_DIR="/home/ubuntu/projects/auto-deploy-contract"
+SERVER_DIR="/home/ubuntu/projects/AIContactTemplate"
 
 # Git分支名称
 GIT_BRANCH=${1:-"main"}
@@ -15,7 +15,7 @@ mkdir -p ./build
 GOOS=linux GOARCH=amd64 go build -o ./build/auto-deploy-contract ./main.go
 cp .env ./build/
 
-# 先停止服务器上运行的程序
+先停止服务器上运行的程序
 echo "检查并停止服务器上运行的程序..."
 ssh $SERVER_USER@$SERVER_IP "pid=\$(ps aux | grep '[a]uto-deploy-contract' | awk '{print \$2}'); \
     if [ ! -z \"\$pid\" ]; then \

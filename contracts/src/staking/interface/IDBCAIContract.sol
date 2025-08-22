@@ -1,9 +1,10 @@
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
-import {NFTStaking} from "../NFTStaking.sol";
+import { NFTStaking } from "../NFTStaking.sol";
+import { StakingType } from "../types.sol";
 
 interface IDBCAIContract {
-    function getMachineState(string calldata machineId, string calldata projectName, NFTStaking.StakingType stakingType)
+    function getMachineState(string calldata machineId, string calldata projectName, StakingType stakingType)
         external
         view
         returns (bool isOnline, bool isRegistered);
@@ -27,9 +28,11 @@ interface IDBCAIContract {
 
     function reportStakingStatus(
         string calldata projectName,
-        NFTStaking.StakingType stakingType,
+        StakingType stakingType,
         string calldata id,
         uint256 gpuNum,
         bool isStake
     ) external;
+
+    function registerProjectStakingContract(string calldata projectName, StakingType stakingType, address toBeNotifiedMachineStateUpdateContractAddress, address toReportStakingStatusContractAddress) external;
 }

@@ -1,26 +1,35 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
-import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+// OpenZeppelin upgradeable contracts for proxy pattern and security
+import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "./interface/IRewardToken.sol";
-import "./interface/IRentContract.sol";
 import "./interface/IDBCAIContract.sol";
-import "./interface/ILongStakeContract.sol";
 
 import "forge-std/console.sol";
 
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {RewardCalculatorLib} from "./library/RewardCalculatorLib.sol";
-import {ToolLib} from "./library/ToolLib.sol";
+// OpenZeppelin upgradeable access control and proxy utilities
+import { OwnableUpgradeable } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+// Custom libraries for reward calculation and utility functions
+import { RewardCalculatorLib } from "./library/RewardCalculatorLib.sol";
+import { ToolLib } from "./library/ToolLib.sol";
 
+// Math utilities and safe token transfers
 import "@openzeppelin/contracts/utils/math/Math.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+// Custom types for staking system
+import { StakingType, MachineStatus, NotifyType } from "./types.sol";
 
-/// @custom:oz-upgrades-from OldNFTStaking
+/**
+ * @title NFTStaking
+ * @dev A comprehensive NFT staking contract for GPU mining rewards
+ * @notice This contract allows users to stake NFTs representing GPU machines and earn rewards
+ * @custom:oz-upgrades-from OldNFTStaking
+ */
 contract NFTStaking is
     Initializable,
     ReentrancyGuardUpgradeable,
@@ -28,63 +37,69 @@ contract NFTStaking is
     UUPSUpgradeable,
     IERC1155Receiver
 {
+    // ============ Constants ============
+    /// @notice Average seconds per block in the blockchain
     uint8 public constant SECONDS_PER_BLOCK = 6;
-    uint256 public constant BASE_RESERVE_AMOUNT = 10_000 ether;
-    uint256 public constant REWARD_DURATION = 0; // never stop
-    uint8 public constant MAX_NFTS_PER_MACHINE = 20;
+    /// @notice Base reserve amount required for staking (100,000 DBC)
+    uint256 public constant BASE_RESERVE_AMOUNT = 100_000 ether;
+    /// @notice Maximum number of NFTs that can be staked per machine
+    uint8 public constant MAX_NFTS_PER_MACHINE = 10;
+    /// @notice Lock period for rewards (180 days)
     uint256 public constant LOCK_PERIOD = 180 days;
-    StakingType public constant STAKING_TYPE = StakingType.LongTerm;
+    /// @notice Type of staking (Free staking)
+    StakingType public constant STAKING_TYPE = StakingType.Free;
+    /// @notice Amount to be slashed for violations (100,000 DBC)
+    uint256 public constant SLASH_AMOUNT = 100_000 ether;
 
-    string public projectName;
-
+    // ============ External Contracts ============
+    /// @notice DBC AI contract interface for machine management
     IDBCAIContract public dbcAIContract;
+    /// @notice ERC1155 NFT token contract representing GPU machines
     IERC1155 public nftToken;
-    IRewardToken public rewardToken;
-    address public longStakeContractAddress;
+    /// @notice ERC20 reward token contract (DBC tokens)
+    IERC20 public rewardToken;
 
+    // ============ Administrative Addresses ============
+    /// @notice Address authorized to upgrade the contract
     address public canUpgradeAddress;
+    /// @notice Address to receive slashed tokens
+    address public slashToAddress;
+    
+    // ============ Reward System State ============
+    /// @notice Total amount of rewards distributed so far
     uint256 public totalDistributedRewardAmount;
+    /// @notice Timestamp when reward distribution starts
     uint256 public rewardStartAtTimestamp;
-
-    uint256 public rewardAmountPerYear;
-    bool public depositedReward;
-
-    uint256 public totalAdjustUnit;
-    uint256 public dailyRewardAmount;
-
-    uint256 public totalReservedAmount;
+    /// @notice Total number of GPUs in the system
     uint256 public totalGpuCount;
+    /// @notice Total amount reserved across all stakes
+    uint256 public totalReservedAmount;
+    /// @notice Total calculation points across all staked machines
     uint256 public totalCalcPoint;
-    address public slashPayToAddress;
-
+    /// @notice Name of the project
+    string public projectName;
+    /// @notice Whether the contract is registered
+    bool public registered;
+    /// @notice Total adjustment units for reward calculation
+    uint256 public totalAdjustUnit;
+    /// @notice Daily reward amount distributed
+    uint256 public dailyRewardAmount;
+    /// @notice Total number of GPUs currently staking
     uint256 public totalStakingGpuCount;
+
     RewardCalculatorLib.RewardsPerShare public rewardsPerCalcPoint;
 
     string[] public stakedMachineIds;
 
-    enum StakingType {
-        ShortTerm,
-        LongTerm,
-        Free
-    }
-
-    enum NotifyType {
-        ContractRegister,
-        MachineRegister,
-        MachineUnregister,
-        MachineOnline,
-        MachineOfflineOnIdle,
-        MachineOfflineOnBusy
-    }
-
-    struct SlashInfo {
-        address stakeHolder;
-        string machineId;
-        uint256 slashAmount;
-        uint256 createdAt;
-        bool paid;
-    }
-
+    // ============ Data Structures ============
+    
+    /**
+     * @dev Details of locked rewards for a machine
+     * @param totalAmount Total amount of locked rewards
+     * @param lockTime Timestamp when rewards were locked
+     * @param unlockTime Timestamp when rewards can be unlocked
+     * @param claimedAmount Amount already claimed from locked rewards
+     */
     struct LockedRewardDetail {
         uint256 totalAmount;
         uint256 lockTime;
@@ -92,101 +107,201 @@ contract NFTStaking is
         uint256 claimedAmount;
     }
 
+    /**
+     * @dev Information about approved report
+     * @param renter Address of the renter who made the report
+     */
     struct ApprovedReportInfo {
         address renter;
     }
 
+    /**
+     * @dev Information about a staked machine
+     * @param holder Address of the user who staked the machine
+     * @param startAtTimestamp Timestamp when staking started
+     * @param lastClaimAtTimestamp Timestamp of the last reward claim
+     * @param calcPoint Calculation points for reward distribution
+     * @param reservedAmount Amount of tokens reserved for this stake
+     * @param nftTokenIds Array of NFT token IDs representing the machine
+     * @param tokenIdBalances Array of balances for each NFT token ID
+     * @param nftCount Total number of NFTs staked
+     * @param claimedAmount Total amount of rewards claimed
+     * @param gpuCount Number of GPUs in this machine
+     */
     struct StakeInfo {
         address holder;
         uint256 startAtTimestamp;
         uint256 lastClaimAtTimestamp;
-        uint256 endAtTimestamp;
         uint256 calcPoint;
         uint256 reservedAmount;
         uint256[] nftTokenIds;
         uint256[] tokenIdBalances;
         uint256 nftCount;
         uint256 claimedAmount;
-        bool isRentedByUser;
         uint256 gpuCount;
-        uint256 nextRenterCanRentAt;
     }
 
-    mapping(address => bool) public clientWalletAddress;
+    // ============ Storage Mappings ============
+    
+    /// @notice Mapping to track valid wallet addresses for admin operations
+    mapping(address => bool) public validWalletAddress;
+    /// @notice Mapping from holder address to their staked machine IDs
     mapping(address => string[]) public holder2MachineIds;
+    /// @notice Mapping from machine ID to array of locked reward details
     mapping(string => LockedRewardDetail[]) public machineId2LockedRewardDetails;
-    mapping(string => ApprovedReportInfo[]) private pendingSlashedMachineId2Renter;
+    /// @notice Mapping from machine ID to its staking information
     mapping(string => StakeInfo) public machineId2StakeInfos;
+    /// @notice Mapping from machine ID to its locked reward details
     mapping(string => LockedRewardDetail) public machineId2LockedRewardDetail;
-    mapping(string => bool) public machineId2Rented;
+    /// @notice Mapping from machine ID to its reward calculation state
     mapping(string => RewardCalculatorLib.UserRewards) public machineId2StakeUnitRewards;
-    mapping(string => bool) private statedMachinesMap;
-    mapping(uint256 => SlashInfo) public slashId2SlashInfo;
-    mapping(string => uint256) public machine2LastSlashId;
+    /// @notice Private mapping to track which machines are staked
+    mapping(string => bool) private stakedMachinesMap;
+    /// @notice Mapping to track machines pending slash
+    mapping(string => bool) public pendingSlashedMachine;
+    /// @notice Mapping to track machines currently working
+    mapping(string => bool) public inWorkingMachine;
 
+    // ============ Events ============
+    
+    /**
+     * @dev Emitted when a machine is staked
+     * @param stakeholder Address of the user who staked
+     * @param machineId Unique identifier of the machine
+     * @param originCalcPoint Original calculation points before NFT multiplier
+     * @param calcPoint Final calculation points after NFT multiplier
+     */
     event Staked(address indexed stakeholder, string machineId, uint256 originCalcPoint, uint256 calcPoint);
 
+    /**
+     * @dev Emitted when GPU type information is recorded for a staked machine
+     * @param machineId Unique identifier of the machine
+     * @param gpuType Type of GPU in the machine
+     */
     event StakedGPUType(string machineId, string gpuType);
-    event AddedStakeHours(address indexed stakeholder, string machineId, uint256 stakeHours);
 
-    event Reserve(string machineId, uint256 amount);
+    /// @dev Emitted when DLC tokens are reserved for a machine
+    event ReserveDLC(string machineId, uint256 amount);
+    
+    /**
+     * @dev Emitted when a machine is unstaked
+     * @param stakeholder Address of the user who unstaked
+     * @param machineId Unique identifier of the machine
+     * @param paybackReserveAmount Amount of reserved tokens returned
+     */
     event Unstaked(address indexed stakeholder, string machineId, uint256 paybackReserveAmount);
+    
+    /**
+     * @dev Emitted when rewards are claimed
+     * @param stakeholder Address of the stakeholder claiming rewards
+     * @param machineId Unique identifier of the machine
+     * @param lockedRewardAmount Amount of rewards locked
+     * @param moveToUserWalletAmount Amount transferred to user wallet
+     * @param moveToReservedAmount Amount moved to reserved balance
+     */
     event Claimed(
         address indexed stakeholder,
         string machineId,
-        uint256 totalRewardAmount,
+        uint256 lockedRewardAmount,
         uint256 moveToUserWalletAmount,
-        uint256 moveToReservedAmount,
-        bool paidSlash
+        uint256 moveToReservedAmount
     );
 
-    event PaySlash(string machineId, address renter, uint256 slashAmount);
-    event RentMachine(address indexed machineOwner, string machineId, uint256 rentFee);
-    event EndRentMachine(address indexed machineOwner, string machineId, uint256 nextCanRentTime);
-    event ReportMachineFault(string machineId, uint256 slashId, address renter);
+    /// @dev Emitted when slash payment is processed
+    event PaySlash(string machineId, uint256 slashAmount);
+    /// @dev Emitted when a machine fault is reported
+    event ReportMachineFault(string machineId, address renter);
+    /// @dev Emitted when rewards per calculation point is updated
     event RewardsPerCalcPointUpdate(uint256 accumulatedPerShareBefore, uint256 accumulatedPerShareAfter);
+    /// @dev Emitted when amount is moved to reserve
     event MoveToReserveAmount(string machineId, address holder, uint256 amount);
+    /// @dev Emitted when rent is renewed
     event RenewRent(string machineId, address holder, uint256 rentFee);
+    /// @dev Emitted when a machine is unregistered
+    event MachineUnregistered(string machineId);
+    /// @dev Emitted when a machine is registered
+    event MachineRegistered(string machineId);
+    /// @dev Emitted when a machine exits staking due to being offline
     event ExitStakingForOffline(string machineId, address holder);
+    /// @dev Emitted when rewarding is recovered for a machine
+    event RecoverRewarding(string machineId, address holder);
+    /// @dev Emitted when machine working status is set
+    event SetMachineWorking(string machineId, bool isWorking);
 
-    // error
-
+    // ============ Custom Errors ============
+    
+    /// @dev Thrown when reward distribution has not started yet
+    error RewardNotStart();
+    /// @dev Thrown when caller is not the authorized rent contract
     error CallerNotRentContract();
+    /// @dev Thrown when a zero address is provided where a valid address is required
     error ZeroAddress();
+    /// @dev Thrown when trying to add an address that already exists
     error AddressExists();
+    /// @dev Thrown when the caller is not authorized to upgrade the contract
     error CanNotUpgrade(address);
+    /// @dev Thrown when provided timestamp is less than current timestamp
     error TimestampLessThanCurrent();
+    /// @dev Thrown when trying to operate on a machine that is not staked
     error MachineNotStaked(string machineId);
+    /// @dev Thrown when trying to stake a machine that is already staking
     error MachineIsStaking(string machineId);
-    error StakeAmountLessThanReserve(string machineId, uint256 amount);
+    /// @dev Thrown when machine memory size is less than 16GB
     error MemorySizeLessThan16G(uint256 mem);
+    /// @dev Thrown when GPU type does not match expected format
     error GPUTypeNotMatch(string gpuType);
+    /// @dev Thrown when calculation point is zero
     error ZeroCalcPoint();
+    /// @dev Thrown when NFT token ID and balance arrays have different lengths
     error InvalidNFTLength(uint256 tokenIdLength, uint256 balanceLength);
+    /// @dev Thrown when caller is not the machine owner
     error NotMachineOwner(address);
+    /// @dev Thrown when no NFT token IDs are provided
     error ZeroNFTTokenIds();
+    /// @dev Thrown when NFT count exceeds maximum allowed (20)
     error NFTCountGreaterThan20();
+    /// @dev Thrown when trying to claim before paying required slash amount
     error NotPaidSlashBeforeClaim(string machineId, uint256 slashAmount);
+    /// @dev Thrown when caller is not the stake holder of the machine
     error NotStakeHolder(string machineId, address currentAddress);
+    /// @dev Thrown when machine is currently rented by a user
     error MachineRentedByUser();
+    /// @dev Thrown when machine is not rented
     error MachineNotRented();
+    /// @dev Thrown when caller is not an admin
     error NotAdmin();
+    /// @dev Thrown when machine does not have enough DBC staked
     error MachineNotStakeEnoughDBC();
-    error InvalidStakeHours();
-    error RewardEnd();
+    /// @dev Thrown when machine is not online or not registered
     error MachineNotOnlineOrRegistered();
+    /// @dev Thrown when caller is neither machine owner nor admin
     error NotMachineOwnerOrAdmin();
+    /// @dev Thrown when machine is still registered and cannot be unstaked
     error MachineStillRegistered();
+    /// @dev Thrown when trying to operate on long-term staking
     error StakingInLongTerm();
+    /// @dev Thrown when machine is currently staking
     error IsStaking();
-    error ShouldPaySlashBeforeStake();
-    error InRenting();
+    /// @dev Thrown when there are not enough rewards available
+    error RewardNotEnough();
+    /// @dev Thrown when total rate does not equal 100%
+    error TotalRateNotEq100();
+    /// @dev Thrown when caller is not the DBC AI contract
+    error NotDBCAIContract();
 
+    /**
+     * @dev Constructor that disables initializers to prevent implementation contract initialization
+     * @notice This is required for UUPS upgradeable contracts
+     */
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
+    /**
+     * @dev Handles batch receipt of ERC1155 tokens
+     * @return bytes4 The function selector to confirm token transfer
+     */
     function onERC1155BatchReceived(
         address, /* unusedParameter */
         address, /* unusedParameter */
@@ -197,6 +312,10 @@ contract NFTStaking is
         return this.onERC1155BatchReceived.selector;
     }
 
+    /**
+     * @dev Handles single receipt of ERC1155 tokens
+     * @return bytes4 The function selector to confirm token transfer
+     */
     function onERC1155Received(
         address, /* unusedParameter */
         address, /* unusedParameter */
@@ -207,112 +326,208 @@ contract NFTStaking is
         return this.onERC1155Received.selector;
     }
 
+    /**
+     * @dev Checks if the contract supports a given interface
+     * @param interfaceId The interface identifier to check
+     * @return bool True if the interface is supported
+     */
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
         return interfaceId == type(IERC1155Receiver).interfaceId;
     }
 
-    modifier onlyClientWallet() {
-        require(clientWalletAddress[msg.sender], NotAdmin());
+    // ============ Modifiers ============
+    
+    /**
+     * @dev Ensures that only valid wallet addresses or the owner can call the function
+     * @notice Reverts if the caller is not in the valid wallet list and not the owner
+     */
+    modifier onlyValidWallet() {
+        require(validWalletAddress[msg.sender] || msg.sender == owner(), NotAdmin());
         _;
     }
 
+    /**
+     * @dev Ensures that only the DBC AI contract can call the function
+     * @notice Reverts if the caller is not the authorized DBC AI contract
+     */
     modifier onlyDBCAIContract() {
-        require(msg.sender == address(dbcAIContract), "only dbc AI contract");
+        require(msg.sender == address(dbcAIContract), NotDBCAIContract());
         _;
     }
 
+    /**
+     * @dev Ensures that a machine can be staked with the provided parameters
+     * @param stakeholder The address of the user staking the machine
+     * @param machineId The unique identifier of the machine to check
+     * @param nftTokenIds Array of NFT token IDs to stake
+     * @param nftTokenIdBalances Array of balances for each NFT token ID
+     * @notice Reverts if the machine cannot be staked due to various conditions
+     */
+    modifier canStake(
+        address stakeholder,
+        string memory machineId,
+        uint256[] memory nftTokenIds,
+        uint256[] memory nftTokenIdBalances
+    ) {
+        require(rewardStartAtTimestamp > 0, RewardNotStart());
+        require(validWalletAddress[msg.sender], NotAdmin());
+        StakeInfo memory stakeInfo = machineId2StakeInfos[machineId];
+        require(stakeInfo.nftTokenIds.length == 0, IsStaking());
+        require(dbcAIContract.freeGpuAmount(machineId) >= 1, MachineNotStakeEnoughDBC());
+        require(
+            nftTokenIds.length == nftTokenIdBalances.length,
+            InvalidNFTLength(nftTokenIds.length, nftTokenIdBalances.length)
+        );
+
+        (bool isOnline, bool isRegistered) = dbcAIContract.getMachineState(machineId, projectName, STAKING_TYPE);
+        require(isOnline && isRegistered, MachineNotOnlineOrRegistered());
+        require(!isStaking(machineId), MachineIsStaking(machineId));
+        require(nftTokenIds.length > 0, ZeroNFTTokenIds());
+        _;
+    }
+
+    /**
+     * @dev Initializes the contract with required parameters
+     * @param _initialOwner The initial owner of the contract
+     * @param _nftToken The ERC1155 NFT token contract address
+     * @param _rewardToken The ERC20 reward token contract address
+     * @param _dbcAIContract The DBC AI contract address
+     * @param _slashToAddress The address to receive slashed tokens
+     * @param _projectName The name of the project
+     */
     function initialize(
-        string memory _projectName,
         address _initialOwner,
         address _nftToken,
         address _rewardToken,
         address _dbcAIContract,
-        uint256 _rewardAmountPerYear
+        address _slashToAddress,
+        string memory _projectName
     ) public initializer {
         __ReentrancyGuard_init();
         __Ownable_init(_initialOwner);
         __UUPSUpgradeable_init();
 
-        projectName = _projectName;
-        rewardToken = IRewardToken(_rewardToken);
+        rewardToken = IERC20(_rewardToken);
         nftToken = IERC1155(_nftToken);
         dbcAIContract = IDBCAIContract(_dbcAIContract);
 
-        rewardAmountPerYear = _rewardAmountPerYear;
-        dailyRewardAmount = rewardAmountPerYear / 365 days;
+        projectName = _projectName;
+        slashToAddress = _slashToAddress;
+
+        dailyRewardAmount = uint256(50_000_000_000 ether) / 365;
+
         canUpgradeAddress = msg.sender;
         rewardsPerCalcPoint.lastUpdated = block.timestamp;
+        rewardStartAtTimestamp = block.timestamp;
     }
 
+    // ============ Admin Functions ============
+    
+    /**
+     * @dev Authorizes contract upgrades (UUPS pattern)
+     * @param newImplementation The address of the new implementation contract
+     * @notice Only the contract owner can authorize upgrades
+     */
     function _authorizeUpgrade(address newImplementation) internal view override onlyOwner {
         require(newImplementation != address(0), ZeroAddress());
         require(msg.sender == canUpgradeAddress, CanNotUpgrade(msg.sender));
     }
 
+    /**
+     * @dev Sets the upgrade address for the contract
+     * @param addr The address authorized to upgrade the contract
+     * @notice Only the contract owner can set upgrade address
+     */
     function setUpgradeAddress(address addr) external onlyOwner {
         canUpgradeAddress = addr;
     }
 
+    /**
+     * @dev Sets the reward token contract address
+     * @param token The address of the ERC20 reward token contract
+     * @notice Only the contract owner can set the reward token
+     */
     function setRewardToken(address token) external onlyOwner {
-        rewardToken = IRewardToken(token);
+        rewardToken = IERC20(token);
     }
 
+    /**
+     * @dev Sets the NFT token contract address
+     * @param token The address of the ERC1155 NFT token contract
+     * @notice Only the contract owner can set the NFT token
+     */
     function setNftToken(address token) external onlyOwner {
         nftToken = IERC1155(token);
     }
 
-    function setLongStakeContract(address _longStakeContract) public onlyOwner {
-        longStakeContractAddress = _longStakeContract;
-    }
-
+    /**
+     * @dev Sets the timestamp when reward distribution starts
+     * @param timestamp The timestamp when rewards begin
+     * @notice Only the contract owner can set the reward start time
+     */
     function setRewardStartAt(uint256 timestamp) external onlyOwner {
         require(timestamp >= block.timestamp, TimestampLessThanCurrent());
         rewardStartAtTimestamp = timestamp;
     }
 
-    function setClientWallets(address[] calldata addrs) external onlyOwner {
+    /**
+     * @dev Adds valid wallet addresses that can interact with the contract
+     * @param addrs Array of wallet addresses to add as valid
+     * @notice Only the contract owner can add valid wallets
+     */
+    function setDLCClientWallets(address[] calldata addrs) external onlyOwner {
         for (uint256 i = 0; i < addrs.length; i++) {
             require(addrs[i] != address(0), ZeroAddress());
-            require(clientWalletAddress[addrs[i]] == false, AddressExists());
-            clientWalletAddress[addrs[i]] = true;
+            require(validWalletAddress[addrs[i]] == false, AddressExists());
+            validWalletAddress[addrs[i]] = true;
         }
     }
 
+    /**
+     * @dev Sets the DBC AI contract address
+     * @param addr The address of the DBC AI contract
+     * @notice Only the contract owner can set the DBC AI contract
+     */
     function setDBCAIContract(address addr) external onlyOwner {
         dbcAIContract = IDBCAIContract(addr);
     }
 
+    /**
+     * @dev Adds additional tokens to an existing staked machine
+     * @param machineId The unique identifier of the machine
+     * @param amount The amount of tokens to add to the stake
+     * @notice Only callable when the machine is already staking
+     */
     function addTokenToStake(string memory machineId, uint256 amount) external nonReentrant {
         require(isStaking(machineId), MachineNotStaked(machineId));
         if (amount == 0) {
             return;
         }
         StakeInfo storage stakeInfo = machineId2StakeInfos[machineId];
-        ApprovedReportInfo[] memory approvedReportInfos = pendingSlashedMachineId2Renter[machineId];
-
-        if (approvedReportInfos.length > 0) {
-            require(
-                amount == BASE_RESERVE_AMOUNT * approvedReportInfos.length,
-                StakeAmountLessThanReserve(machineId, amount)
-            );
-            for (uint8 i = 0; i < approvedReportInfos.length; i++) {
-                // pay slash to renters
-                payToRenterForSlashing(machineId, stakeInfo, approvedReportInfos[i].renter, false);
-                amount -= BASE_RESERVE_AMOUNT;
-            }
-            delete pendingSlashedMachineId2Renter[machineId];
-        }
 
         _joinStaking(machineId, stakeInfo.calcPoint, amount + stakeInfo.reservedAmount);
-        emit Reserve(machineId, amount);
+        emit ReserveDLC(machineId, amount);
     }
 
+    /**
+     * @dev Internal function to validate machine specifications for staking
+     * @param calcPoint The calculation points of the machine
+     * @param gpuType The GPU type string of the machine
+     * @param mem The memory size of the machine in GB
+     * @notice Reverts if machine specifications don't meet staking requirements
+     */
     function revertIfMachineInfoCanNotStake(uint256 calcPoint, string memory gpuType, uint256 mem) internal pure {
         require(mem >= 16, MemorySizeLessThan16G(mem));
         require(ToolLib.checkString(gpuType), GPUTypeNotMatch(gpuType));
         require(calcPoint > 0, ZeroCalcPoint());
     }
 
+    /**
+     * @dev Initializes locked reward information for a machine if not already set
+     * @param machineId The unique identifier of the machine
+     * @param currentTime The current timestamp to use for lock calculations
+     * @notice Only initializes if the machine doesn't have existing lock info
+     */
     function _tryInitMachineLockRewardInfo(string memory machineId, uint256 currentTime) internal {
         if (machineId2LockedRewardDetail[machineId].lockTime == 0) {
             machineId2LockedRewardDetail[machineId] = LockedRewardDetail({
@@ -324,39 +539,19 @@ contract NFTStaking is
         }
     }
 
-    modifier canStake(
-        address stakeholder,
-        string memory machineId,
-        uint256[] memory nftTokenIds,
-        uint256[] memory nftTokenIdBalances
-    ) {
-        require(pendingSlashedMachineId2Renter[machineId].length == 0, ShouldPaySlashBeforeStake());
-        require(clientWalletAddress[msg.sender], NotAdmin());
-        StakeInfo memory stakeInfo = machineId2StakeInfos[machineId];
-        require(stakeInfo.nftTokenIds.length == 0, IsStaking());
-        require(dbcAIContract.freeGpuAmount(machineId) >= 1, MachineNotStakeEnoughDBC());
-        require(
-            nftTokenIds.length == nftTokenIdBalances.length,
-            InvalidNFTLength(nftTokenIds.length, nftTokenIdBalances.length)
-        );
-
-        require(!rewardEnd(), RewardEnd());
-        (bool isOnline, bool isRegistered) = dbcAIContract.getMachineState(machineId, projectName, STAKING_TYPE);
-        require(isOnline && isRegistered, MachineNotOnlineOrRegistered());
-        require(!isStaking(machineId), MachineIsStaking(machineId));
-        require(nftTokenIds.length > 0, ZeroNFTTokenIds());
-        if (longStakeContractAddress != address(0)) {
-            require(!ILongStakeContract(longStakeContractAddress).isStaking(machineId), StakingInLongTerm());
-        }
-        _;
-    }
-
+    /**
+     * @dev Stakes NFTs representing GPU machines to earn rewards
+     * @param stakeholder The address of the user staking the machine
+     * @param machineId The unique identifier of the machine to stake
+     * @param nftTokenIds Array of NFT token IDs to stake
+     * @param nftTokenIdBalances Array of balances for each NFT token ID
+     */
     function stake(
         address stakeholder,
         string calldata machineId,
         uint256[] calldata nftTokenIds,
         uint256[] calldata nftTokenIdBalances
-    ) external canStake(stakeholder, machineId, nftTokenIds, nftTokenIdBalances) nonReentrant {
+    ) external onlyValidWallet canStake(stakeholder, machineId, nftTokenIds, nftTokenIdBalances) nonReentrant {
         (address machineOwner, uint256 calcPoint,, string memory gpuType,,,,, uint256 mem) =
             dbcAIContract.getMachineInfo(machineId, true);
         require(machineOwner == stakeholder, NotMachineOwner(machineOwner));
@@ -367,29 +562,28 @@ contract NFTStaking is
         uint256 originCalcPoint = calcPoint;
         calcPoint = calcPoint * nftCount;
         uint256 currentTime = block.timestamp;
-        uint256 stakeEndAt = 0;
+
         uint8 gpuCount = 1;
-        if (!statedMachinesMap[machineId]) {
-            statedMachinesMap[machineId] = true;
+        if (!stakedMachinesMap[machineId]) {
+            stakedMachinesMap[machineId] = true;
             totalGpuCount += gpuCount;
         }
+
         totalStakingGpuCount += gpuCount;
 
+        StakeInfo storage oldStakeInfo = machineId2StakeInfos[machineId];
         nftToken.safeBatchTransferFrom(stakeholder, address(this), nftTokenIds, nftTokenIdBalances, "transfer");
         machineId2StakeInfos[machineId] = StakeInfo({
             startAtTimestamp: currentTime,
             lastClaimAtTimestamp: currentTime,
-            endAtTimestamp: stakeEndAt,
             calcPoint: 0,
             reservedAmount: 0,
             nftTokenIds: nftTokenIds,
             tokenIdBalances: nftTokenIdBalances,
             nftCount: nftCount,
             holder: stakeholder,
-            claimedAmount: 0,
-            isRentedByUser: false,
-            gpuCount: gpuCount,
-            nextRenterCanRentAt: currentTime
+            claimedAmount: oldStakeInfo.claimedAmount,
+            gpuCount: gpuCount
         });
 
         _joinStaking(machineId, calcPoint, 0);
@@ -401,10 +595,14 @@ contract NFTStaking is
         emit StakedGPUType(machineId, gpuType);
     }
 
-    function getPendingSlashCount(string memory machineId) public view returns (uint256) {
-        return pendingSlashedMachineId2Renter[machineId].length;
-    }
-
+    /**
+     * @dev Gets comprehensive reward information for a staked machine
+     * @param machineId The unique identifier of the machine
+     * @return newRewardAmount The total new rewards accumulated for the machine
+     * @return canClaimAmount The amount of rewards that can be claimed immediately
+     * @return lockedAmount The amount of rewards that are locked
+     * @return claimedAmount The amount of rewards already claimed
+     */
     function getRewardInfo(string memory machineId)
         public
         view
@@ -424,6 +622,11 @@ contract NFTStaking is
         );
     }
 
+    /**
+     * @dev Calculates the total number of NFTs from balance array
+     * @param nftTokenIdBalances Array of NFT token balances
+     * @return nftCount The total count of NFTs
+     */
     function getNFTCount(uint256[] memory nftTokenIdBalances) internal pure returns (uint256 nftCount) {
         for (uint256 i = 0; i < nftTokenIdBalances.length; i++) {
             nftCount += nftTokenIdBalances[i];
@@ -454,10 +657,8 @@ contract NFTStaking is
         (uint256 _dailyReleaseAmount,) = calculateReleaseRewardAndUpdate(machineId);
         canClaimAmount += _dailyReleaseAmount;
 
-        ApprovedReportInfo[] storage approvedReportInfos = pendingSlashedMachineId2Renter[machineId];
-        bool slashed = approvedReportInfos.length > 0;
         uint256 moveToReserveAmount = 0;
-        if (canClaimAmount > 0 && (_isStaking || slashed)) {
+        if (canClaimAmount > 0 && _isStaking) {
             if (stakeInfo.reservedAmount < BASE_RESERVE_AMOUNT) {
                 (uint256 _moveToReserveAmount, uint256 leftAmountCanClaim) =
                     tryMoveReserve(machineId, canClaimAmount, stakeInfo);
@@ -466,22 +667,8 @@ contract NFTStaking is
             }
         }
 
-        bool paidSlash = false;
-        if (slashed && stakeInfo.reservedAmount >= BASE_RESERVE_AMOUNT) {
-            ApprovedReportInfo memory lastSlashInfo = approvedReportInfos[approvedReportInfos.length - 1];
-            payToRenterForSlashing(machineId, stakeInfo, lastSlashInfo.renter, true);
-            approvedReportInfos.pop();
-            paidSlash = true;
-        }
-
-        if (stakeInfo.reservedAmount < BASE_RESERVE_AMOUNT && _isStaking) {
-            (uint256 _moveToReserveAmount, uint256 leftAmountCanClaim) =
-                tryMoveReserve(machineId, canClaimAmount, stakeInfo);
-            canClaimAmount = leftAmountCanClaim;
-            moveToReserveAmount = _moveToReserveAmount;
-        }
-
         if (canClaimAmount > 0) {
+            require(rewardToken.balanceOf(address(this)) - totalReservedAmount >= canClaimAmount, RewardNotEnough());
             SafeERC20.safeTransfer(rewardToken, stakeholder, canClaimAmount);
         }
 
@@ -494,15 +681,26 @@ contract NFTStaking is
             machineId2LockedRewardDetail[machineId].totalAmount += lockedAmount;
         }
 
-        emit Claimed(
-            stakeholder, machineId, rewardAmount + _dailyReleaseAmount, canClaimAmount, moveToReserveAmount, paidSlash
-        );
+        emit Claimed(stakeholder, machineId, lockedAmount, canClaimAmount, moveToReserveAmount);
     }
 
+    /**
+     * @dev Gets all machine IDs staked by a specific stakeholder
+     * @param holder The address of the stakeholder
+     * @return string[] Array of machine IDs owned by the stakeholder
+     */
     function getMachineIdsByStakeholder(address holder) external view returns (string[] memory) {
         return holder2MachineIds[holder];
     }
 
+    /**
+     * @dev Gets aggregated reward information for all machines owned by a stakeholder
+     * @param holder The address of the stakeholder
+     * @return availableRewardAmount Total available rewards across all machines
+     * @return canClaimAmount Total amount that can be claimed immediately
+     * @return lockedAmount Total amount of locked rewards
+     * @return claimedAmount Total amount already claimed
+     */
     function getAllRewardInfo(address holder)
         external
         view
@@ -520,24 +718,15 @@ contract NFTStaking is
         return (availableRewardAmount, canClaimAmount, lockedAmount, claimedAmount);
     }
 
-    function claimAll() external {
-        string[] memory machineIds = holder2MachineIds[msg.sender];
-        for (uint256 i = 0; i < machineIds.length; i++) {
-            claim(machineIds[i]);
-        }
-    }
-
+    /**
+     * @dev Claims accumulated rewards for a staked machine
+     * @param machineId The unique identifier of the machine to claim rewards for
+     */
     function claim(string memory machineId) public {
         address stakeholder = msg.sender;
         StakeInfo storage stakeInfo = machineId2StakeInfos[machineId];
 
-        require(
-            getPendingSlashCount(machineId) == 0,
-            NotPaidSlashBeforeClaim(machineId, getPendingSlashCount(machineId) * BASE_RESERVE_AMOUNT)
-        );
-
         require(stakeInfo.holder == stakeholder, NotStakeHolder(machineId, stakeholder));
-        //        require(block.timestamp - stakeInfo.lastClaimAtTimestamp >= 1 days, "last claim less than 1 day");
 
         _claim(machineId);
     }
@@ -586,6 +775,12 @@ contract NFTStaking is
         return (releaseAmount, lockedRewardDetail.totalAmount - releaseAmount);
     }
 
+    /**
+     * @dev Calculates the amount of locked rewards that can be released
+     * @param machineId The unique identifier of the machine
+     * @return releaseAmount The amount of rewards that can be released now
+     * @return lockedAmount The amount of rewards still locked
+     */
     function calculateReleaseReward(string memory machineId)
         public
         view
@@ -607,39 +802,42 @@ contract NFTStaking is
         return (releaseAmount, lockedRewardDetail.totalAmount - releaseAmount);
     }
 
+    /**
+     * @dev Unstakes a machine and claims any pending rewards
+     * @param machineId The unique identifier of the machine to unstake
+     */
     function unStake(string calldata machineId) public nonReentrant {
         StakeInfo storage stakeInfo = machineId2StakeInfos[machineId];
-        require(stakeInfo.startAtTimestamp > 0, MachineNotStaked(machineId));
-        require(block.timestamp >= stakeInfo.endAtTimestamp, MachineNotStaked(machineId));
-        require(!stakeInfo.isRentedByUser, MachineRentedByUser());
-        (, bool isRegistered) = dbcAIContract.getMachineState(machineId, projectName, STAKING_TYPE);
-        require(!isRegistered, MachineStillRegistered());
+        if (msg.sender != address(this)) {
+            require(stakeInfo.startAtTimestamp > 0, MachineNotStaked(machineId));
+            (, bool isRegistered) = dbcAIContract.getMachineState(machineId, projectName, STAKING_TYPE);
+            require(!isRegistered, MachineStillRegistered());
+        } else {
+            emit ExitStakingForOffline(machineId, stakeInfo.holder);
+        }
         _claim(machineId);
         _unStake(machineId, stakeInfo.holder);
     }
 
-    function forceUnStake(string calldata machineId) internal nonReentrant {
+    function forceUnStake(string calldata machineId) external onlyOwner {
         StakeInfo storage stakeInfo = machineId2StakeInfos[machineId];
-
         _claim(machineId);
         _unStake(machineId, stakeInfo.holder);
-        emit ExitStakingForOffline(machineId, stakeInfo.holder);
     }
 
     function unStakeByHolder(string calldata machineId) public nonReentrant {
         StakeInfo storage stakeInfo = machineId2StakeInfos[machineId];
         require(msg.sender == stakeInfo.holder, NotStakeHolder(machineId, msg.sender));
         require(stakeInfo.startAtTimestamp > 0, MachineNotStaked(machineId));
-        require(stakeInfo.isRentedByUser == false, MachineRentedByUser());
         (, bool isRegistered) = dbcAIContract.getMachineState(machineId, projectName, STAKING_TYPE);
         require(!isRegistered, MachineStillRegistered());
 
-        require(machineId2Rented[machineId] == false, InRenting());
+        //        require(machineId2Rented[machineId] == false, InRenting());
         _claim(machineId);
         _unStake(machineId, stakeInfo.holder);
     }
 
-    function _unStake(string memory machineId, address stakeholder) internal {
+    function _unStake(string calldata machineId, address stakeholder) internal {
         StakeInfo storage stakeInfo = machineId2StakeInfos[machineId];
         uint256 reservedAmount = stakeInfo.reservedAmount;
 
@@ -649,7 +847,6 @@ contract NFTStaking is
             totalReservedAmount = totalReservedAmount > reservedAmount ? totalReservedAmount - reservedAmount : 0;
         }
 
-        stakeInfo.endAtTimestamp = block.timestamp;
         nftToken.safeBatchTransferFrom(
             address(this), stakeholder, stakeInfo.nftTokenIds, stakeInfo.tokenIdBalances, "transfer"
         );
@@ -677,32 +874,64 @@ contract NFTStaking is
         }
     }
 
+    /**
+     * @dev Gets the stakeholder address for a specific machine
+     * @param machineId The unique identifier of the machine
+     * @return address The address of the stakeholder who owns the machine
+     */
     function getStakeHolder(string calldata machineId) external view returns (address) {
         StakeInfo memory stakeInfo = machineId2StakeInfos[machineId];
         return stakeInfo.holder;
     }
 
+    /**
+     * @dev Checks if a machine is currently staking
+     * @param machineId The unique identifier of the machine
+     * @return bool True if the machine is actively staking, false otherwise
+     */
     function isStaking(string memory machineId) public view returns (bool) {
         StakeInfo storage stakeInfo = machineId2StakeInfos[machineId];
-        bool _isStaking = stakeInfo.holder != address(0) && stakeInfo.startAtTimestamp > 0;
-        if (stakeInfo.endAtTimestamp != 0) {
-            _isStaking = _isStaking && block.timestamp < stakeInfo.endAtTimestamp;
-        }
+        bool _isStaking = stakeInfo.holder != address(0) && stakeInfo.nftCount > 0;
         return _isStaking;
     }
 
-    function tryPaySlashOnReport(
-        StakeInfo memory stakeInfo,
-        string memory machineId,
-        uint256 slashId,
-        address _slashToPayAddress
-    ) internal {
-        if (stakeInfo.reservedAmount >= BASE_RESERVE_AMOUNT) {
-            payToRenterForSlashing(machineId, stakeInfo, _slashToPayAddress, true);
-            slashId2SlashInfo[slashId].paid = true;
+    function reportMachineFault(string calldata machineId) internal {
+        if (!rewardStart()) {
+            return;
         }
+
+        StakeInfo storage stakeInfo = machineId2StakeInfos[machineId];
+        emit ReportMachineFault(machineId, slashToAddress);
+        _claim(machineId);
+        payForSlashing(machineId, stakeInfo, slashToAddress, true);
+        _unStake(machineId, stakeInfo.holder);
     }
 
+    function isStakingButOffline(string calldata machineId) internal view returns (bool) {
+        StakeInfo memory stakeInfo = machineId2StakeInfos[machineId];
+        return stakeInfo.calcPoint == 0 && stakeInfo.nftCount > 0;
+    }
+
+    /**
+     * @dev Gets the calculation points for a specific machine
+     * @param machineId The unique identifier of the machine
+     * @return uint256 The calculation points assigned to the machine
+     */
+    function getaCalcPoint(string memory machineId) external view returns (uint256) {
+        StakeInfo memory info = machineId2StakeInfos[machineId];
+        return info.calcPoint;
+    }
+
+    /**
+     * @dev Gets comprehensive information about a staked machine
+     * @param machineId The unique identifier of the machine
+     * @return holder The address of the stakeholder
+     * @return calcPoint The calculation points of the machine
+     * @return startAtTimestamp When the staking started
+     * @return reservedAmount The amount of tokens reserved
+     * @return isOnline Whether the machine is online
+     * @return isRegistered Whether the machine is registered
+     */
     function getMachineInfo(string memory machineId)
         external
         view
@@ -710,8 +939,6 @@ contract NFTStaking is
             address holder,
             uint256 calcPoint,
             uint256 startAtTimestamp,
-            uint256 endAtTimestamp,
-            uint256 nextRenterCanRentAt,
             uint256 reservedAmount,
             bool isOnline,
             bool isRegistered
@@ -719,35 +946,19 @@ contract NFTStaking is
     {
         StakeInfo memory info = machineId2StakeInfos[machineId];
         (bool _isOnline, bool _isRegistered) = dbcAIContract.getMachineState(machineId, projectName, STAKING_TYPE);
-        return (
-            info.holder,
-            info.calcPoint,
-            info.startAtTimestamp,
-            info.endAtTimestamp,
-            info.nextRenterCanRentAt,
-            info.reservedAmount,
-            _isOnline,
-            _isRegistered
-        );
+        return (info.holder, info.calcPoint, info.startAtTimestamp, info.reservedAmount, _isOnline, _isRegistered);
     }
 
-    function payToRenterForSlashing(
-        string memory machineId,
-        StakeInfo memory stakeInfo,
-        address slashToPayAddress,
-        bool alreadyStaked
-    ) internal {
+    function payForSlashing(string memory machineId, StakeInfo storage stakeInfo, address slashTo, bool alreadyStaked)
+        internal
+    {
+        uint256 slashAmount = stakeInfo.reservedAmount >= SLASH_AMOUNT ? SLASH_AMOUNT : stakeInfo.reservedAmount;
+        SafeERC20.safeTransfer(rewardToken, slashTo, slashAmount);
         if (alreadyStaked) {
-            _joinStaking(machineId, stakeInfo.calcPoint, stakeInfo.reservedAmount - BASE_RESERVE_AMOUNT);
+            _joinStaking(machineId, stakeInfo.calcPoint, stakeInfo.reservedAmount - SLASH_AMOUNT);
         }
-        rewardToken.transfer(slashToPayAddress, BASE_RESERVE_AMOUNT);
 
-        //        paidSlash(machineId);
-        emit PaySlash(machineId, slashToPayAddress, BASE_RESERVE_AMOUNT);
-    }
-
-    function getGlobalState() external view returns (uint256, uint256) {
-        return (totalCalcPoint, totalReservedAmount);
+        emit PaySlash(machineId, SLASH_AMOUNT);
     }
 
     function _getRewardDetail(uint256 totalRewardAmount)
@@ -760,18 +971,19 @@ contract NFTStaking is
         return (releaseImmediateAmount, releaseLinearLockedAmount);
     }
 
+    /**
+     * @dev Gets the total accumulated rewards for a machine
+     * @param machineId The unique identifier of the machine
+     * @return uint256 The total reward amount accumulated
+     */
     function getReward(string memory machineId) external view returns (uint256) {
         return calculateRewards(machineId);
     }
 
-    function getDailyRewardAmount() public view returns (uint256) {
-        uint256 remainingSupply = rewardAmountPerYear - totalDistributedRewardAmount;
-        if (dailyRewardAmount > remainingSupply) {
-            return remainingSupply;
-        }
-        return dailyRewardAmount;
-    }
-
+    /**
+     * @dev Checks if reward distribution has started
+     * @return bool True if rewards are being distributed, false otherwise
+     */
     function rewardStart() internal view returns (bool) {
         return rewardStartAtTimestamp > 0 && block.timestamp >= rewardStartAtTimestamp;
     }
@@ -783,15 +995,13 @@ contract NFTStaking is
     }
 
     function _getUpdatedRewardPerCalcPoint() internal view returns (RewardCalculatorLib.RewardsPerShare memory) {
-        uint256 rewardsPerSeconds = (getDailyRewardAmount()) / 1 days;
+        uint256 rewardsPerSeconds = dailyRewardAmount / 1 days;
         if (rewardStartAtTimestamp == 0) {
             return RewardCalculatorLib.RewardsPerShare(0, 0);
         }
-        //        uint256 rewardEndAt = Math.min(rewardStartAtTimestamp + REWARD_DURATION, stakeEndAtTimestamp);
-        uint256 rewardEndAt = REWARD_DURATION == 0 ? 0 : rewardStartAtTimestamp + REWARD_DURATION;
 
         RewardCalculatorLib.RewardsPerShare memory rewardsPerTokenUpdated = RewardCalculatorLib.getUpdateRewardsPerShare(
-            rewardsPerCalcPoint, totalAdjustUnit, rewardsPerSeconds, rewardStartAtTimestamp, rewardEndAt
+            rewardsPerCalcPoint, totalAdjustUnit, rewardsPerSeconds, rewardStartAtTimestamp
         );
         return rewardsPerTokenUpdated;
     }
@@ -808,6 +1018,12 @@ contract NFTStaking is
         machineId2StakeUnitRewards[machineId] = machineRewardsUpdated;
     }
 
+    /**
+     * @dev Calculates the machine shares based on calculation points and reserved amount
+     * @param calcPoint The calculation points of the machine
+     * @param reservedAmount The amount of tokens reserved for the machine
+     * @return uint256 The calculated machine shares
+     */
     function _getMachineShares(uint256 calcPoint, uint256 reservedAmount) public pure returns (uint256) {
         return
             calcPoint * ToolLib.LnUint256(reservedAmount > BASE_RESERVE_AMOUNT ? reservedAmount : BASE_RESERVE_AMOUNT);
@@ -845,11 +1061,13 @@ contract NFTStaking is
         }
     }
 
+    /**
+     * @dev Calculates the total rewards accumulated for a specific machine
+     * @param machineId The unique identifier of the machine
+     * @return uint256 The total reward amount calculated for the machine
+     */
     function calculateRewards(string memory machineId) public view returns (uint256) {
         StakeInfo memory stakeInfo = machineId2StakeInfos[machineId];
-        if (stakeInfo.lastClaimAtTimestamp > stakeInfo.endAtTimestamp && stakeInfo.endAtTimestamp > 0) {
-            return 0;
-        }
         uint256 machineShares = _getMachineShares(stakeInfo.calcPoint, stakeInfo.reservedAmount);
 
         RewardCalculatorLib.UserRewards memory machineRewards = machineId2StakeUnitRewards[machineId];
@@ -866,37 +1084,12 @@ contract NFTStaking is
         return machineRewards.accumulated + rewardAmount;
     }
 
-    function rewardEnd() public view returns (bool) {
-        if (REWARD_DURATION == 0 || rewardStartAtTimestamp == 0) {
-            return false;
-        }
-        return (block.timestamp > rewardStartAtTimestamp + REWARD_DURATION);
-    }
-
-    // function getRewardEndAtTimestamp(uint256 stakeEndAtTimestamp) internal view returns (uint256) {
-    //     uint256 rewardEndAt = rewardStartAtTimestamp + REWARD_DURATION;
-    //     uint256 currentTime = block.timestamp;
-    //     if (stakeEndAtTimestamp > rewardEndAt) {
-    //         return rewardEndAt;
-    //     } else if (stakeEndAtTimestamp > currentTime && stakeEndAtTimestamp - currentTime <= 1 hours) {
-    //         return stakeEndAtTimestamp > 1 hours ? stakeEndAtTimestamp - 1 hours : 0;
-    //     }
-    //     if (stakeEndAtTimestamp != 0 && stakeEndAtTimestamp < currentTime) {
-    //         return stakeEndAtTimestamp;
-    //     }
-    //     return currentTime;
-    // }
-
-    function getRewardStartTime(uint256 _rewardStartAtTimestamp) public view returns (uint256) {
-        if (_rewardStartAtTimestamp == 0) {
-            return 0;
-        }
-        if (block.timestamp > _rewardStartAtTimestamp) {
-            uint256 timeDuration = block.timestamp - _rewardStartAtTimestamp;
-            return block.timestamp - timeDuration;
-        }
-
-        return block.timestamp + (_rewardStartAtTimestamp - block.timestamp);
+    /**
+     * @dev Returns the version number of the contract
+     * @return uint256 The current version number
+     */
+    function version() external pure returns (uint256) {
+        return 1;
     }
 
     function oneDayAccumulatedPerShare(uint256 currentAccumulatedPerShare, uint256 totalShares)
@@ -905,13 +1098,20 @@ contract NFTStaking is
         returns (uint256)
     {
         uint256 elapsed = 1 days;
-        uint256 rewardsRate = (getDailyRewardAmount()) / 1 days;
+        uint256 rewardsRate = dailyRewardAmount / 1 days;
 
         uint256 accumulatedPerShare = currentAccumulatedPerShare + 1 ether * elapsed * rewardsRate / totalShares;
 
         return accumulatedPerShare;
     }
 
+    /**
+     * @dev Pre-calculates potential rewards for a machine configuration
+     * @param calcPoint The base calculation points of the machine
+     * @param nftCount The number of NFTs to be staked
+     * @param reserveAmount The amount of tokens to be reserved
+     * @return uint256 The estimated daily reward amount
+     */
     function preCalculateRewards(uint256 calcPoint, uint256 nftCount, uint256 reserveAmount)
         public
         view
@@ -932,8 +1132,29 @@ contract NFTStaking is
         return rewardAmount;
     }
 
+    /**
+     * @dev Updates and emits events for machine registration status changes
+     * @param machineId The unique identifier of the machine
+     * @param _registered True if machine is being registered, false if unregistered
+     * @notice Internal function to handle registration status updates
+     */
+    function updateMachineRegisterStatus(string memory machineId, bool _registered) internal {
+        if (_registered) {
+            emit MachineRegistered(machineId);
+        } else {
+            emit MachineUnregistered(machineId);
+        }
+    }
+
+     /**
+     * @dev Handles notifications from the DBC AI contract about machine status changes
+     * @param tp The type of notification
+     * @param machineId The unique identifier of the machine
+     * @return bool True if the notification was processed successfully
+     */
     function notify(NotifyType tp, string calldata machineId) external onlyDBCAIContract returns (bool) {
         if (tp == NotifyType.ContractRegister) {
+            registered = true;
             return true;
         }
 
@@ -942,50 +1163,62 @@ contract NFTStaking is
             return false;
         }
 
-        StakeInfo memory stakeInfo = machineId2StakeInfos[machineId];
-        if (tp == NotifyType.MachineOfflineOnBusy) {
-            SlashInfo memory slashInfo = newSlashInfo(stakeInfo.holder, machineId, BASE_RESERVE_AMOUNT);
-            addSlashInfoAndReport(slashInfo);
-        } else if (tp == NotifyType.MachineOfflineOnIdle) {
-            forceUnStake(machineId);
-        }
+        bool machineInWorking = inWorkingMachine[machineId];
 
+        if (tp == NotifyType.MachineOffline) {
+            if (machineInWorking) {
+              reportMachineFault(machineId);
+            } else {
+              stopRewarding(machineId);
+            }
+        } else if (tp == NotifyType.MachineOnline && isStakingButOffline(machineId)) {
+            recoverRewarding(machineId);
+        }else if (tp == NotifyType.MachineUnregister) {
+            updateMachineRegisterStatus(machineId,false);
+        }else if (tp == NotifyType.MachineRegister) {
+            updateMachineRegisterStatus(machineId,true);
+        }
         return true;
     }
+    
 
-    function newSlashInfo(address slasher, string memory machineId, uint256 slashAmount)
-        internal
-        view
-        returns (SlashInfo memory)
-    {
-        SlashInfo memory slashInfo = SlashInfo({
-            stakeHolder: slasher,
-            machineId: machineId,
-            slashAmount: slashAmount,
-            createdAt: block.timestamp,
-            paid: false
-        });
-        return slashInfo;
+    /**
+     * @dev Stops reward distribution for a machine that went offline
+     * @param machineId The unique identifier of the machine
+     * @notice Sets calculation points to 0 while maintaining reserved amount
+     */
+    function stopRewarding(string memory machineId) internal {
+        StakeInfo storage stakeInfo = machineId2StakeInfos[machineId];
+        _joinStaking(machineId, 0, stakeInfo.reservedAmount);
+        emit ExitStakingForOffline(machineId, stakeInfo.holder);
     }
 
-    function addSlashInfoAndReport(SlashInfo memory slashInfo) internal {
-        uint256 slashId = machine2LastSlashId[slashInfo.machineId];
-        slashId++;
-        machine2LastSlashId[slashInfo.machineId] = slashId;
-        slashId2SlashInfo[slashId] = slashInfo;
-        _reportMachineFault(slashInfo.machineId, slashId);
-        emit ReportMachineFault(slashInfo.machineId, slashId, slashPayToAddress);
-    }
-
-    function _reportMachineFault(string memory machineId, uint256 slashId) internal {
-        if (!rewardStart()) {
+    /**
+     * @dev Recovers reward distribution for a machine that came back online
+     * @param machineId The unique identifier of the machine
+     * @notice Restores calculation points and resumes reward distribution
+     */
+    function recoverRewarding(string memory machineId) internal {
+        StakeInfo storage stakeInfo = machineId2StakeInfos[machineId];
+        if (stakeInfo.calcPoint != 0) {
             return;
         }
 
-        StakeInfo memory stakeInfo = machineId2StakeInfos[machineId];
-        tryPaySlashOnReport(stakeInfo, machineId, slashId, slashPayToAddress);
-
-        _claim(machineId);
-        _unStake(machineId, stakeInfo.holder);
+        (, uint256 calcPoint,,,,,,,) = dbcAIContract.getMachineInfo(machineId, true);
+        calcPoint = calcPoint * stakeInfo.nftCount;
+        _joinStaking(machineId, calcPoint, stakeInfo.reservedAmount);
+        emit RecoverRewarding(machineId, stakeInfo.holder);
     }
+
+    /**
+     * @dev Sets the working status of a machine
+     * @param machineId The unique identifier of the machine
+     * @param isWorking True if machine is working, false otherwise
+     * @notice Only valid wallet addresses can call this function
+     */
+    function setMachineWorking(string calldata machineId, bool isWorking) external onlyValidWallet {
+        inWorkingMachine[machineId] = isWorking;
+        emit SetMachineWorking(machineId, isWorking);
+    }
+
 }

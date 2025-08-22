@@ -25,6 +25,7 @@ func WriteEnv(envVars map[string]string, path string, tp contractType) error {
 	}
 	if tp == STAKING {
 		envVars["DBC_AI_PROXY"] = DBC_AI_PROXY
+		envVars["SLASH_TO_ADDRESS"] = DBC_AI_PROXY
 	}
 
 	// 构建 .env 文件内容
