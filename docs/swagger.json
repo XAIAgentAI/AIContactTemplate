@@ -1,0 +1,381 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "contact": {}
+    },
+    "paths": {
+        "/deploy/IAO": {
+            "post": {
+                "description": "Deploy a new contract with the given parameters",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "deployment"
+                ],
+                "summary": "Deploy contract",
+                "parameters": [
+                    {
+                        "description": "Deployment parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.DeployIAORequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/deploy/payment": {
+            "post": {
+                "description": "Deploy a new contract with the given parameters",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "deployment"
+                ],
+                "summary": "Deploy contract",
+                "parameters": [
+                    {
+                        "description": "Deployment parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.DeployPaymentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/deploy/staking": {
+            "post": {
+                "description": "Deploy a new contract with the given parameters",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "deployment"
+                ],
+                "summary": "Deploy contract",
+                "parameters": [
+                    {
+                        "description": "Deployment parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.DeployStakingRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/deploy/token": {
+            "post": {
+                "description": "Deploy a new contract with the given parameters",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "deployment"
+                ],
+                "summary": "Deploy contract",
+                "parameters": [
+                    {
+                        "description": "Deployment parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.DeployTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.StandardResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "api.DeployIAORequest": {
+            "type": "object",
+            "required": [
+                "duration_hours",
+                "owner",
+                "reward_amount",
+                "reward_token",
+                "start_timestamp",
+                "token_in_address"
+            ],
+            "properties": {
+                "duration_hours": {
+                    "type": "integer",
+                    "example": 72
+                },
+                "owner": {
+                    "type": "string",
+                    "example": "0xAE5015960Ff1E3ad095a7037533b1e3E7240b54D"
+                },
+                "reward_amount": {
+                    "type": "string",
+                    "example": "2000000000000000000000000000"
+                },
+                "reward_token": {
+                    "type": "string",
+                    "example": "0x07D325030dA1A8c1f96C414BFFbe4fBD539CED45"
+                },
+                "start_timestamp": {
+                    "type": "integer",
+                    "example": 1743663600
+                },
+                "token_in_address": {
+                    "type": "string",
+                    "example": "0x07D325030dA1A8c1f96C414BFFbe4fBD539CED45"
+                }
+            }
+        },
+        "api.DeployPaymentRequest": {
+            "type": "object",
+            "required": [
+                "address_free_request_count",
+                "free_request_count",
+                "min_usd_balance_for_using_free_request",
+                "owner",
+                "payment_token",
+                "vip_monthly_quotas",
+                "vip_price_fixed_count",
+                "vip_price_monthly"
+            ],
+            "properties": {
+                "address_free_request_count": {
+                    "description": "Number of free requests available for each address",
+                    "type": "integer",
+                    "example": 10
+                },
+                "free_request_count": {
+                    "description": "Number of free requests available for the contract",
+                    "type": "integer",
+                    "example": 100
+                },
+                "min_usd_balance_for_using_free_request": {
+                    "description": "Minimum USD balance required for using free requests for the address",
+                    "type": "integer",
+                    "example": 100000
+                },
+                "owner": {
+                    "description": "Owner address of the contract",
+                    "type": "string",
+                    "example": "0xAE5015960Ff1E3ad095a7037533b1e3E7240b54D"
+                },
+                "payment_token": {
+                    "description": "Payment token address",
+                    "type": "string",
+                    "example": "0x07D325030dA1A8c1f96C414BFFbe4fBD539CED45"
+                },
+                "vip_monthly_quotas": {
+                    "description": "Number of VIP requests available for each month",
+                    "type": "integer",
+                    "example": 10
+                },
+                "vip_price_fixed_count": {
+                    "description": "Fixed price for VIP requests",
+                    "type": "integer",
+                    "example": 100000
+                },
+                "vip_price_monthly": {
+                    "description": "Monthly price for VIP requests",
+                    "type": "integer",
+                    "example": 100000
+                }
+            }
+        },
+        "api.DeployStakingRequest": {
+            "type": "object",
+            "required": [
+                "nft",
+                "owner",
+                "project_name",
+                "reward_amount_per_year",
+                "reward_token"
+            ],
+            "properties": {
+                "nft": {
+                    "type": "string",
+                    "example": "0x07D325030dA1A8c1f96C414BFFbe4fBD539CED45"
+                },
+                "owner": {
+                    "type": "string",
+                    "example": "0xAE5015960Ff1E3ad095a7037533b1e3E7240b54D"
+                },
+                "project_name": {
+                    "type": "string",
+                    "example": "Project"
+                },
+                "reward_amount_per_year": {
+                    "type": "string",
+                    "example": "2000000000000000000000000000"
+                },
+                "reward_token": {
+                    "type": "string",
+                    "example": "0x07D325030dA1A8c1f96C414BFFbe4fBD539CED45"
+                }
+            }
+        },
+        "api.DeployTokenRequest": {
+            "type": "object",
+            "required": [
+                "amount_to_iao",
+                "iao_contract_address",
+                "owner",
+                "token_amount_can_mint_per_year",
+                "token_init_supply",
+                "token_name",
+                "token_supply_fixed_years",
+                "token_symbol"
+            ],
+            "properties": {
+                "amount_to_iao": {
+                    "type": "string",
+                    "example": "100000000000000000000000000"
+                },
+                "iao_contract_address": {
+                    "type": "string",
+                    "example": "0xAE5015960Ff1E3ad095a7037533b1e3E7240b54D"
+                },
+                "owner": {
+                    "type": "string",
+                    "example": "0xAE5015960Ff1E3ad095a7037533b1e3E7240b54D"
+                },
+                "token_amount_can_mint_per_year": {
+                    "type": "string",
+                    "example": "6000000000000000000000000000"
+                },
+                "token_init_supply": {
+                    "type": "string",
+                    "example": "2000000000000000000000000000"
+                },
+                "token_name": {
+                    "type": "string",
+                    "example": "TokenName"
+                },
+                "token_supply_fixed_years": {
+                    "type": "integer",
+                    "example": 8
+                },
+                "token_symbol": {
+                    "type": "string",
+                    "example": "TN"
+                }
+            }
+        },
+        "api.StandardResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "Status code",
+                    "type": "integer"
+                },
+                "data": {
+                    "description": "Data"
+                },
+                "message": {
+                    "description": "Message",
+                    "type": "string"
+                }
+            }
+        }
+    }
+}
